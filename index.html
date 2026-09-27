@@ -223,7 +223,7 @@ function secsOf(c){const core=BANK.sections.filter(s=>s.id!=="G"),g=BANK.section
 const openQ=c=>secsOf(c).flatMap(s=>s.questions).filter(q=>q.type==="open");
 
 /* ================== OUTILS ================== */
-const K_LIST="tgs_rec_candidats",K_CUR="tgs_rec_encours",K_PWD="tgs_rec_pwd2019",K_CV="tgs_rec_cv";
+const K_LIST="tgs_rec_candidats",K_CUR="tgs_rec_encours",K_PWD="tgs_rec_pwd2019",K_CV="tgs_rec_cv",K_EXP="tgs_rec_lastexport",K_AUTO="tgs_rec_autoexport";
 const load=(k,d)=>{try{return JSON.parse(localStorage.getItem(k))??d}catch(e){return d}};
 const save=(k,v)=>localStorage.setItem(k,JSON.stringify(v));
 function hash(str){let h1=0xdeadbeef^str.length,h2=0x41c6ce57^str.length;for(let i=0,ch;i<str.length;i++){ch=str.charCodeAt(i);h1=Math.imul(h1^ch,2654435761);h2=Math.imul(h2^ch,1597334677);}h1=Math.imul(h1^(h1>>>16),2246822507)^Math.imul(h2^(h2>>>13),3266489909);h2=Math.imul(h2^(h2>>>16),2246822507)^Math.imul(h1^(h1>>>13),3266489909);return (4294967296*(2097151&h2)+(h1>>>0)).toString(36);}
@@ -242,6 +242,7 @@ const fmtHour=t=>t?new Date(t).toLocaleTimeString("fr-FR",{hour:"2-digit",minute
 const fmtDur=ms=>{if(ms==null||isNaN(ms))return"—";const s=Math.round(ms/1000),m=Math.floor(s/60);return m?`${m} min ${String(s%60).padStart(2,"0")} s`:`${s} s`};
 const shuffle=a=>{a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}return a};
 const normPhone=s=>String(s||"").replace(/\D/g,"").slice(-10);
+const flash=el=>{el.style.transition="background .6s";el.style.background="#e6f4ea";el.style.borderColor="";setTimeout(()=>el.style.background="",900)};
 const deacc=s=>String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase();
 const nameTokens=s=>deacc(s).replace(/[^a-z]/g," ").split(/\s+/).filter(t=>t.length>1);
 const words=t=>{t=(t||"").trim();return t?t.split(/\s+/).length:0};
@@ -255,8 +256,8 @@ function findCV(nom,prenom,tel){
   const cvs=load(K_CV,[]),p=normPhone(tel),tn=nameTokens(nom).filter(t=>t.length>=2),tp=nameTokens(prenom).filter(t=>t.length>=2);
   let best=null,bs=0;
   cvs.forEach(cv=>{
-    const nt=nameTokens(cv.nom),txt=" "+nameTokens((cv.text||"").slice(0,4000)).join(" ")+" ";
-    const inName=t=>nt.includes(t),inTxt=t=>txt.includes(" "+t+" ");
+    const nt=nameTokens(cv.nom),txt=" "+nameTokens((cv.text||"").slice(0,4000)).join(" ")+" ",em=deacc(String(cv.email||"").split("@")[0]).replace(/[^a-z]/g,"");
+    const inName=t=>nt.includes(t),inTxt=t=>txt.includes(" "+t+" ")||(t.length>=4&&em.includes(t));
     const mn=tn.filter(t=>inName(t)||inTxt(t)).length,mp=tp.filter(t=>inName(t)||inTxt(t)).length;
     const mName=tn.concat(tp).filter(inName).length;
     const ph=p.length>=8&&(cv.tels||[]).some(t=>normPhone(t)===p);
@@ -277,7 +278,7 @@ function renderWelcome(msg){
   <div class="card">
     <h1>Bienvenue chez TGS CI</h1>
     <p class="muted">Entretien pour le poste de <b>Chargée d'accueil et relation client</b> : accueil physique à l'atelier, accueil téléphonique et échanges WhatsApp avec la clientèle.</p>
-    <p>Pour afficher votre fiche d'entretien, saisissez votre <b>nom</b>, vos <b>prénoms</b> et prenez une <b>photo de votre visage</b>.</p>
+    <p>Pour afficher votre fiche d'entretien, saisissez votre <b>nom</b>, vos <b>prénoms</b> et prenez une <b>photo de votre visage</b>. Cette photo est demandée par la direction de TGS CI pour votre dossier d'entretien.</p>
     <div class="idgrid">
       <div class="photoBox">
         <div class="photoPrev" id="pPrev"><span>Photo du visage *</span></div>
@@ -315,7 +316,7 @@ function consignesHTML(){return `
     <h2>Consignes d'utilisation</h2>
     <div class="note">
       <ol class="steps">
-        <li>Saisissez votre <b>nom</b> et vos <b>prénoms</b>, touchez <span class="kbd">Prendre ma photo</span> et prenez une photo nette de votre visage, de face. Le numéro de téléphone est facultatif. Touchez ensuite <span class="kbd">Afficher ma fiche d'entretien</span>.</li>
+        <li>Saisissez votre <b>nom</b> et vos <b>prénoms</b>, touchez <span class="kbd">Prendre ma photo</span> et prenez une photo nette de votre visage, de face (photo demandée par la direction pour votre dossier). Le numéro de téléphone est facultatif. Touchez ensuite <span class="kbd">Afficher ma fiche d'entretien</span>.</li>
         <li>Vérifiez les informations de votre fiche, complétez si possible les autres champs, cochez la case d'engagement, puis touchez <span class="kbd">Commencer l'entretien</span>. Le chronomètre démarre à ce moment (en haut à droite).</li>
         <li>L'entretien comporte <b>8 parties</b>. Pour répondre, touchez la phrase de votre choix : elle s'encadre en bleu.
           <br><span class="small muted">Rond = une seule réponse possible. Carré = plusieurs réponses possibles.</span></li>
@@ -633,40 +634,74 @@ function synthese(c,r){
 /* ================== CV : IMPORT ET LECTURE ================== */
 async function pdfLib(){await loadScript(PDFJS);window.pdfjsLib.GlobalWorkerOptions.workerSrc=PDFJS_W;return window.pdfjsLib}
 async function ocrCanvas(canvas,onP){await loadScript(TESS);const r=await Tesseract.recognize(canvas,"fra",{logger:m=>{if(m.status==="recognizing text"&&onP)onP(Math.round(m.progress*100))}});return r.data.text||""}
+async function ocrHeader(src){const out=[];for(const [x0,h] of [[0,0.15],[0.36,0.12],[0,0.3]]){const c=document.createElement("canvas");const sw=Math.round(src.width*(1-x0)),sh=Math.round(src.height*h);c.width=sw;c.height=sh;const g=c.getContext("2d");g.drawImage(src,src.width*x0,0,sw,sh,0,0,sw,sh);const d=g.getImageData(0,0,sw,sh);for(let k=0;k<d.data.length;k+=4){const v=(d.data[k]*.3+d.data[k+1]*.59+d.data[k+2]*.11)<140?0:255;d.data[k]=d.data[k+1]=d.data[k+2]=v}g.putImageData(d,0,0);const t=await ocrCanvas(c);out.push(t);if(nameGuess(t).nom)return t}return ""}
 function canvasFromDataURL(u){return new Promise((res,rej)=>{const i=new Image();i.onload=()=>{const k=Math.min(1,2000/Math.max(i.width,i.height));const c=document.createElement("canvas");c.width=i.width*k;c.height=i.height*k;c.getContext("2d").drawImage(i,0,0,c.width,c.height);res(c)};i.onerror=rej;i.src=u})}
 const fileToDataURL=f=>new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(f)});
 async function readCV(file,onP){
   let text="",thumb=null,ocr=false;
   if(file.type==="application/pdf"||/\.pdf$/i.test(file.name)){
     const lib=await pdfLib();const pdf=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
-    let first=null;
+    var first=null;
     for(let p=1;p<=Math.min(pdf.numPages,3);p++){const pg=await pdf.getPage(p);const tc=await pg.getTextContent();let last=null;
       tc.items.forEach(it=>{const y=Math.round(it.transform[5]);if(last!==null&&Math.abs(y-last)>3)text+="\n";else if(last!==null)text+=" ";text+=it.str;last=y});text+="\n";
       if(p===1){const vp=pg.getViewport({scale:2});const c=document.createElement("canvas");c.width=vp.width;c.height=vp.height;await pg.render({canvasContext:c.getContext("2d"),viewport:vp}).promise;first=c}}
     const t=document.createElement("canvas");const k=360/first.width;t.width=360;t.height=first.height*k;t.getContext("2d").drawImage(first,0,0,t.width,t.height);thumb=t.toDataURL("image/jpeg",0.75);
     if(text.replace(/\s/g,"").length<60){onP&&onP("reconnaissance du texte (CV scanné)…");text=await ocrCanvas(first,x=>onP&&onP("reconnaissance du texte "+x+" %"));ocr=true}
   }else{
-    const u=await fileToDataURL(file);const c=await canvasFromDataURL(u);
+    const u=await fileToDataURL(file);const c=await canvasFromDataURL(u);var first=c;
     const t=document.createElement("canvas");const k=360/c.width;t.width=360;t.height=c.height*k;t.getContext("2d").drawImage(c,0,0,t.width,t.height);thumb=t.toDataURL("image/jpeg",0.75);
     onP&&onP("reconnaissance du texte…");text=await ocrCanvas(c,x=>onP&&onP("reconnaissance du texte "+x+" %"));ocr=true;
   }
-  return{text,thumb,ocr};
+  return{text,thumb,ocr,first:typeof first!=="undefined"?first:null};
 }
-const NAME_STOP=/curriculum|vitae|\bcv\b|profil|contact|experience|formation|competence|adresse|telephone|e-?mail|objectif|langue|loisir|diplome|assistante?|secretaire|stage|licence|master|informati|reference|centre|interet|personnel|parcours|nationalite|cote d.ivoire|abidjan|situation|etat civil|date|ne le|nee le|agent|charge|gestion|caissiere|hotesse|commerciale|developpe|technicien|a propos|about|resume|qualit|atout|skills/;
+const NAME_BAD=/curriculum|vitae|\bcv\b|profil|contact|experience|formation|competence|adresse|telephone|e-?mail|objectif|langue|loisir|diplome|assistante?|secretaire|stage|licence|master|informati|reference|centre|interet|personnel|parcours|nationalite|ivoir|abidjan|situation|etat civil|date|agent|charge|gestion|caissiere|hotesse|commercial|developpe|technicien|propos|about|resume|qualit|atout|skills|service|client|vente|caisse|stock|equipe|communication|marketing|direction|office|manager|specialit|coordonnee|responsable|pharmacie|hotel|restaurant|universite|ecole|lycee|college|institut|bingerville|cocody|yopougon|plateau|koumassi|marcory|abobo|francais|anglais|word|excel|sport|lecture|musique|voyage|cuisine|mobile|merci|candidature|disponib|celibataire|enfant|polyvalent|professionnel|receptionniste|serveuse|vendeuse|gerante|stagiaire|informations|logiciel|outils|certificat|baccalaureat|brevet|etudes|entreprise|societe|secteur|sarl|groupe|mission|tache|poste|niveau|notions|travail|logistique|transport|comptab|finance|banque|assurance|commerce|achats|capacite|organisation|rigueur|ponctualite|dynamique|serieu|autonom|adaptation|ecoute|relation|accueil|conseil/;
+const upTok=t=>/^[A-ZÀ-ÝŒ'’\-]+$/.test(t);
+function nameGuess(text){
+  const raw=text.split(/\n/).map(l=>l.replace(/\s+/g," ").trim());
+  const email=(text.match(/[\w.+-]+@[\w-]+\.[\w.]+/)||[""])[0];
+  const lx=deacc(email.split("@")[0]).replace(/[^a-z]/g,"");
+  const cands=[];let idx=0;
+  raw.forEach((l,i)=>{
+    if(!l)return;
+    if(/[\d@&|:•▪,;\/()]/.test(l.replace(/^[^A-Za-zÀ-ÿ]+/,""))&&!/^[^A-Za-zÀ-ÿ]*[A-Za-zÀ-ÿ'’\- ]+$/.test(l)){idx++;return}
+    const toks=l.replace(/[^A-Za-zÀ-ÿŒœ'’\- ]/g," ").split(/\s+/).map(t=>t.replace(/^['’\-]+|['’\-]+$/g,"")).filter(t=>t.replace(/[^A-Za-zÀ-ÿ]/g,"").length>=2);
+    if(!toks.length||toks.length>5){idx++;return}
+    const d=deacc(toks.join(" "));
+    if(NAME_BAD.test(d)||/\b(de|du|des|et|la|le|les|en|au|aux|pour|avec|sur)\b/.test(d)&&toks.length>2){idx++;return}
+    const ok=t=>/^[A-ZÀ-Ý]/.test(t)||/-[A-ZÀ-Ý]/.test(t)||(t.match(/[A-ZÀ-Ý]/g)||[]).length>=2;
+    const nOk=toks.filter(ok).length;
+    if(nOk===0||(nOk<toks.length&&toks.length>3)){idx++;return}
+    let s=0;
+    if(toks.every(upTok))s+=3;else if(nOk===toks.length)s+=1;
+    if(idx<5)s+=3;else if(idx<15)s+=1;
+    const et=toks.flatMap(t=>deacc(t).split(/[^a-z]+/)).filter(t=>t.length>=3&&lx.includes(t)).length;s+=et*4;
+    if(toks.length===1)s-=2;
+    cands.push({i,toks,s});idx++;
+  });
+  // fusion avec la ligne suivante (nom sur 2 lignes)
+  const all=cands.slice();
+  cands.forEach(c=>{const n=cands.find(x=>x.i>c.i&&x.i<=c.i+3&&raw.slice(c.i+1,x.i).every(l=>(l.match(/[A-Za-zÀ-ÿ]/g)||[]).length<2));
+    if(n&&c.toks.length+n.toks.length<=6)all.push({i:c.i,toks:c.toks.concat(n.toks),s:c.s+Math.max(n.s,0)+2+(n.toks.length===1?2:0)})});
+  all.sort((a,b)=>b.s-a.s);
+  const best=all[0];if(!best||best.s<3)return{nom:"",email};
+  const set=best.toks.slice();const low=set.map(t=>deacc(t));
+  all.forEach(c=>{if(c.s>=4&&c.toks.some(t=>low.includes(deacc(t))))c.toks.forEach(t=>{if(!low.includes(deacc(t))){set.push(t);low.push(deacc(t))}})});
+  const pretty=set.slice(0,6).map(t=>(t.match(/[A-ZÀ-Ý]/g)||[]).length>=Math.max(2,t.replace(/[^A-Za-zÀ-ÿ]/g,"").length/2)?t.toUpperCase():t.charAt(0).toUpperCase()+t.slice(1).replace(/-([a-zà-ÿ])/g,(m,x)=>"-"+x.toUpperCase()));
+  return{nom:pretty.join(" "),email};
+}
 function parseCV(text,fileName){
   const lines=text.split(/\n/).map(l=>l.replace(/\s+/g," ").trim()).filter(Boolean);
-  let nom="";
-  for(const l of lines.slice(0,25)){const d=deacc(l);if(NAME_STOP.test(d))continue;if(!/^[A-Za-zÀ-ÿ'’\- ]{5,45}$/.test(l))continue;const w=l.split(" ").filter(x=>x.length>1);if(w.length<2||w.length>5)continue;
-    if(w.some(x=>x===x.toUpperCase()&&x.length>1)||w.every(x=>/^[A-ZÀ-Ý]/.test(x))){nom=l;break}}
-  if(!nom){nom=fileName.replace(/\.[a-z]+$/i,"").replace(/[_\-]+/g," ").replace(/\b(cv|CV|Cv|new|final|pdf|de|du|mon|professionnel|francais|simple|bleu|\d+)\b/g," ").replace(/\s+/g," ").trim()}
+  const nom=nameGuess(text).nom;
   const tels=[...new Set((text.match(/(?:\+?\s?225[\s.\-]?)?\(?0\d\)?(?:[\s.\-]?\d{2}){4}/g)||[]).map(x=>normPhone(x)).filter(x=>x.length===10))];
   const email=(text.match(/[\w.+-]+@[\w-]+\.[\w.]+/)||[""])[0];
   const d=deacc(text);
   const dip=((text.match(/\b(BTS|Licence|LICENCE|Master|MASTER|DUT|BAC\s?\+?\s?\d?|Baccalaur[ée]at|BEPC|CAP|BT|Doctorat|DTS|HND)\b[^\n]{0,70}/)||[""])[0]).replace(/\s+/g," ").replace(/[|,;\s]+$/,"").trim();
   const sc={};const mk=new Set();
-  Object.entries(PROF_RX).forEach(([k,re])=>{const m=d.match(re)||[];sc[k]=m.length;m.slice(0,6).forEach(x=>mk.add(x))});
+  const head=deacc(lines.slice(0,12).join(" "));
+  Object.entries(PROF_RX).forEach(([k,re])=>{const m=d.match(re)||[];sc[k]=m.length+2*((head.match(re)||[]).length);m.slice(0,6).forEach(x=>mk.add(x))});
   const years=(d.match(/\b(19|20)\d{2}\s*(-|–|a|au)\s*((19|20)\d{2}|aujourd|ce jour|present|nos jours)/g)||[]).length;
-  let best=Object.entries(sc).sort((a,b)=>b[1]-a[1])[0];
+  const PRI={ACC:0,ADM:1,CAI:2,TEC:3};let best=Object.entries(sc).sort((a,b)=>b[1]-a[1]||PRI[a[0]]-PRI[b[0]])[0];
+  if(best&&best[0]!=="ACC"&&sc.ACC>=3&&sc.ACC>=0.75*best[1])best=["ACC",sc.ACC];
   let profil=best&&best[1]>=2?best[0]:"JUN";
   if(profil==="ACC"&&sc.ACC<3&&years<1)profil="JUN";
   return{nom,tels,email,diplome:dip,profil,profilAuto:profil,scores:sc,motsCles:[...mk].slice(0,12)};
@@ -674,7 +709,8 @@ function parseCV(text,fileName){
 async function importCVs(files,onP){
   const C=load(K_CV,[]);let i=0,errs=[];
   for(const f of files){i++;const tag=`CV ${i}/${files.length} (${f.name}) : `;
-    try{onP(tag+"lecture…");const r=await readCV(f,x=>onP(tag+x));const info=parseCV(r.text,f.name);
+    try{onP(tag+"lecture…");const r=await readCV(f,x=>onP(tag+x));let info=parseCV(r.text,f.name);
+      if(!info.nom&&r.first){try{onP(tag+"recherche du nom dans l'en-tête…");const hd=await ocrHeader(r.first);if(hd.trim()){r.text=hd+"\n"+r.text;info=parseCV(r.text,f.name)}}catch(e){}}
       const id="V"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
       await idb.put({id:"F_"+id,data:await fileToDataURL(f),type:f.type||"application/pdf",name:f.name});
       await idb.put({id:"T_"+id,data:r.thumb});
@@ -685,6 +721,26 @@ async function importCVs(files,onP){
 }
 async function openCV(id){try{const f=await idb.get("F_"+id);if(!f){alert("Fichier introuvable.");return}const b=await (await fetch(f.data)).blob();const u=URL.createObjectURL(b);const w=window.open(u,"_blank");if(!w)location.href=u}catch(e){alert("Impossible d'ouvrir le CV.")}}
 
+
+/* ================== EXPORT ================== */
+const csvCell=v=>{v=String(v??"");return /[;"\n]/.test(v)?'"'+v.replace(/"/g,'""')+'"':v};
+function buildCSV(){const rows=load(K_LIST,[]).map(c=>({c,r:compute(c)})).sort((a,b)=>b.r.total-a.r.total);
+  const H=["Rang","Nom","Téléphone","Date","Durée","Questionnaire","QCM /"+W.qcm,"Rédigé /"+W.open,"Présentation /"+W.pres,"Profil /"+W.profil,"Langue /10","Fautes /100 mots","Total /100","Décision","Alertes","Sorties de page"];
+  const L=rows.map(({c,r},i)=>[i+1,c.info.nom,c.info.tel,fmtDate(c.endedAt)+" "+fmtHour(c.endedAt),fmtDur(r.durMs),PROFILS[c.profil]||"",r.s.qcm.toFixed(1),r.s.open.toFixed(1),r.presDone?r.s.pres.toFixed(1):"",r.profDone?r.s.profil.toFixed(1):"",r.lang.note!==undefined?Number(r.lang.note).toFixed(1):"",r.lang.dens.toFixed(1),r.total.toFixed(1),r.dec,r.alerts.join(" | "),(c.away||[]).length]);
+  return "\ufeff"+[H,...L].map(l=>l.map(csvCell).join(";")).join("\r\n")}
+async function buildBackup(){const list=load(K_LIST,[]);const photos={};
+  for(const c of list){try{const p=c.photoInline?{data:c.photoInline}:await idb.get("P_"+c.id);if(p)photos[c.id]=p.data}catch(e){}}
+  return JSON.stringify({app:"TGS CI recrutement",exportLe:new Date().toISOString(),resultats:list,cv:load(K_CV,[]).map(({text,...x})=>x),photos})}
+let expCache=null;
+async function prepareExport(){const d=new Date(),st=d.toISOString().slice(0,10)+"_"+String(d.getHours()).padStart(2,"0")+"h"+String(d.getMinutes()).padStart(2,"0");
+  expCache=[new File([await buildBackup()],"TGS-CI-recrutement-sauvegarde_"+st+".json",{type:"application/json"}),new File([buildCSV()],"TGS-CI-recrutement-classement_"+st+".csv",{type:"text/csv"})];return expCache}
+function newSinceExport(){const t=+localStorage.getItem(K_EXP)||0;return load(K_LIST,[]).filter(c=>(c.endedAt||0)>t).length}
+function markExported(){localStorage.setItem(K_EXP,String(Date.now()))}
+function downloadFiles(files){files.forEach((f,i)=>setTimeout(()=>{const a=document.createElement("a");a.href=URL.createObjectURL(f);a.download=f.name;document.body.appendChild(a);a.click();a.remove()},i*700))}
+async function doExport(viaShare){const files=expCache||await prepareExport();
+  if(viaShare&&navigator.canShare&&navigator.canShare({files})){try{await navigator.share({files,title:"Résultats recrutement TGS CI"});markExported();return true}catch(e){if(e&&e.name==="AbortError")return false}}
+  downloadFiles(files);markExported();return true}
+
 /* ================== ESPACE ADMIN ================== */
 function openAdmin(){
   if(isAdmin){renderList();return}
@@ -694,7 +750,8 @@ function openAdmin(){
     <div class="row" style="margin-top:14px"><button class="btn ghost" id="back">Retour</button><span class="spacer"></span><button class="btn" id="go">Entrer</button></div>
     <p id="err" class="small" style="color:var(--bad)"></p></div>`;
   $("#pw").focus();
-  const go=()=>{if(hash($("#pw").value)===pwdHash()){isAdmin=true;if(cur)leaveSection();stopTimer();renderList()}else $("#err").textContent="Mot de passe incorrect."};
+  const go=async()=>{if(hash($("#pw").value)===pwdHash()){isAdmin=true;if(cur)leaveSection();stopTimer();renderList();
+    if(localStorage.getItem(K_AUTO)!=="0"&&newSinceExport()){try{if(await doExport(true))renderList()}catch(e){}}}else $("#err").textContent="Mot de passe incorrect."};
   $("#go").onclick=go;$("#pw").onkeydown=e=>{if(e.key==="Enter")go()};
   $("#back").onclick=home;
 }
@@ -711,6 +768,7 @@ function renderList(){
       <button class="btn ghost sm" id="printList">Imprimer le classement</button>
       <button class="btn ghost sm" id="logout">Quitter l'espace admin</button></div>
     <p class="muted small" style="margin:10px 0 0">Note sur 100 = QCM ${W.qcm} + réponses rédigées ${W.open} (notées automatiquement, modifiables) + présentation ${W.pres} + profil/CV ${W.profil}. Retenue à partir de ${SEUIL_RETENUE}/100, à revoir de ${SEUIL_REVOIR} à ${SEUIL_RETENUE-1}.</p>
+    ${newSinceExport()?`<div class="alert okline" id="expBanner" style="border-color:var(--brand-2);background:#eef4fb;display:flex;align-items:center;gap:12px;flex-wrap:wrap"><span><b>${newSinceExport()} résultat(s) non sauvegardé(s).</b> Enregistrez-les dans l'app Fichiers de l'iPad.</span><span class="spacer"></span><button class="btn sm" id="expNow">Exporter maintenant</button></div>`:""}
     ${cur?`<div class="alert" style="border-color:var(--warn);background:#fdf6ea">Entretien en cours : ${esc(cur.info.nom)} (commencé à ${fmtHour(cur.startedAt)}, partie ${cur.step+1}/${secsOf(cur).length}).</div>`:""}
   </div>
   <div class="card">
@@ -723,15 +781,16 @@ function renderList(){
   </div>
   <div class="card no-print">
     <div class="row"><h2 style="margin:0">CV des candidates</h2><span class="spacer"></span>
+      ${cvs.length?`<button class="btn ghost sm" id="cvRe">Relire les noms et profils</button>`:""}
       <label class="btn sm" style="cursor:pointer" for="cvUp">Déposer des CV (PDF ou photos)</label><input type="file" id="cvUp" accept="application/pdf,image/*" multiple hidden></div>
-    <p class="muted small">Déposez tous les CV reçus. Le texte est lu automatiquement (y compris les CV scannés ou photographiés) pour retrouver chaque candidate par son nom et ses prénoms, et choisir le questionnaire adapté à son profil. Vérifiez le nom détecté et le profil, et indiquez l'heure de convocation pour noter la ponctualité. Les CV restent enregistrés sur cette tablette.</p>
+    <p class="muted small">Déposez tous les CV reçus. Le texte est lu automatiquement (y compris les CV scannés ou photographiés) pour retrouver chaque candidate par son nom et ses prénoms, et choisir le questionnaire adapté à son profil. Le nom, les prénoms et le téléphone sont lus dans le contenu du CV (le nom du fichier n'est pas utilisé). Vérifiez-les : vous pouvez corriger le nom, le téléphone et le questionnaire directement dans le tableau, la modification est enregistrée aussitôt. Indiquez aussi l'heure de convocation pour noter la ponctualité. Les CV restent enregistrés sur cette tablette.</p>
     <div id="cvProg" class="small" style="color:var(--brand-2);font-weight:600">${esc(cvMsg)}</div>
     ${cvs.length?`<div class="tscroll"><table><thead><tr><th></th><th>Candidate (nom détecté)</th><th>Téléphone(s)</th><th>Questionnaire</th><th>Convocation</th><th>Statut</th><th></th></tr></thead><tbody>
     ${cvs.map(x=>{const done=list.find(c=>c.cvId===x.id);const enc=cur&&cur.cvId===x.id;return `<tr>
       <td><img class="cvthumb" data-thumb="${x.id}" alt=""></td>
-      <td><input type="text" data-cvf="nom" data-id="${x.id}" value="${esc(x.nom||"")}" placeholder="Nom et prénoms"><div class="small muted">${esc(x.file)}${x.ocr?" · lu par reconnaissance d'image":""}${!x.text||x.text.length<40?` · <span style="color:var(--bad)">texte non lu, saisissez le nom</span>`:""}</div></td>
+      <td><input type="text" data-cvf="nom" data-id="${x.id}" value="${esc(x.nom||"")}" placeholder="Nom non trouvé : saisissez-le" ${x.nom?"":'style="border-color:var(--bad)"'}><div class="small muted">${x.email?esc(x.email)+" · ":""}${esc(x.file)}${x.ocr?" · lu par reconnaissance d'image":""}${!x.text||x.text.length<40?` · <span style="color:var(--bad)">texte non lu, saisissez le nom</span>`:""}</div></td>
       <td><input type="text" data-cvf="tels" data-id="${x.id}" value="${esc((x.tels||[]).join(", "))}" style="min-width:130px"></td>
-      <td><select data-cvf="profil" data-id="${x.id}">${Object.entries(PROFILS).map(([k,l])=>`<option value="${k}" ${x.profil===k?"selected":""}>${l}${x.profilAuto===k?" (auto)":""}</option>`).join("")}</select></td>
+      <td><select data-cvf="profil" data-id="${x.id}">${Object.entries(PROFILS).map(([k,l])=>`<option value="${k}" ${x.profil===k?"selected":""}>${l}${x.profilAuto===k?" (auto)":""}</option>`).join("")}</select>${x.scores?`<div class="small muted" style="margin-top:4px">Indices lus dans le CV : ${["ACC","CAI","ADM","TEC"].map(k=>`${{ACC:"accueil",CAI:"caisse/vente",ADM:"administratif",TEC:"technique"}[k]} ${x.scores[k]||0}`).join(" · ")}</div>`:""}</td>
       <td><input type="datetime-local" data-cvf="rdv" data-id="${x.id}" value="${esc(x.rdv||"")}"></td>
       <td>${done?`<span class="badge b-ok">Passé</span>`:enc?`<span class="badge b-warn">En cours</span>`:`<span class="badge b-na">En attente</span>`}</td>
       <td style="white-space:nowrap"><button class="btn ghost sm" data-open="${x.id}">Voir</button> <button class="btn danger sm" data-delcv="${x.id}">Retirer</button></td></tr>`}).join("")}
@@ -739,25 +798,30 @@ function renderList(){
   </div>
   <div class="card no-print">
     <h3>Sauvegarde et réglages</h3>
-    <p class="muted small">Les résultats, photos et CV sont enregistrés dans le navigateur de cette tablette (ils restent après fermeture de la page). Exportez-les régulièrement pour les conserver ou les transférer.</p>
-    <div class="row"><button class="btn ghost sm" id="exp">Exporter les résultats (.json)</button>
+    <p class="muted small">Les résultats, photos et CV sont enregistrés dans le navigateur de cette tablette (ils restent après fermeture de la page). Le bouton « Exporter » crée deux fichiers : une sauvegarde complète (.json, avec les photos, à réimporter ici si besoin) et le classement (.csv, lisible dans Excel ou Numbers). Sur iPad, choisissez « Enregistrer dans Fichiers ». Avec l'export automatique, les nouveaux résultats sont exportés dès que vous ouvrez l'espace admin.${localStorage.getItem(K_EXP)?` Dernier export : ${fmtDate(+localStorage.getItem(K_EXP))} à ${fmtHour(+localStorage.getItem(K_EXP))}.`:""}</p>
+    <div class="row"><button class="btn sm" id="exp">Exporter les résultats sur l'iPad</button>
+    <label class="small" style="display:flex;align-items:center;gap:8px;margin:0 8px"><input type="checkbox" id="autoExp" ${localStorage.getItem(K_AUTO)!=="0"?"checked":""}> Export automatique à l'ouverture de l'espace admin</label>
     <label class="btn ghost sm" style="cursor:pointer">Importer un fichier<input type="file" id="imp" accept=".json" hidden></label>
     <span class="spacer"></span><button class="btn ghost sm" id="chpw">Changer le mot de passe</button></div>
   </div>`;
   app.querySelectorAll("tr.click").forEach(tr=>tr.onclick=()=>renderDetail(tr.dataset.id));
   cvs.forEach(x=>idb.get("T_"+x.id).then(t=>{const im=app.querySelector(`[data-thumb="${x.id}"]`);if(im&&t)im.src=t.data}).catch(()=>{}));
   app.querySelectorAll("[data-cvf]").forEach(inp=>inp.onchange=()=>{const C=load(K_CV,[]);const x=C.find(y=>y.id===inp.dataset.id);const f=inp.dataset.cvf;
-    x[f]=f==="tels"?inp.value.split(",").map(s=>s.trim()).filter(Boolean):inp.value;save(K_CV,C);
+    x[f]=f==="tels"?inp.value.split(",").map(s=>s.trim()).filter(Boolean):inp.value;if(f!=="rdv")x[f+"Manuel"]=true;save(K_CV,C);flash(inp);
     if(f==="rdv"){const L=load(K_LIST,[]);L.forEach(c=>{if(c.cvId===x.id)c.info.rdv=inp.value});save(K_LIST,L)}});
+  const re=$("#cvRe");if(re)re.onclick=()=>{const C=load(K_CV,[]);let n=0;C.forEach(x=>{if(!x.text)return;const i=parseCV(x.text,x.file);if(!x.nomManuel&&i.nom&&i.nom!==x.nom){x.nom=i.nom;n++}if(!x.telsManuel)x.tels=i.tels;x.email=i.email;x.scores=i.scores;x.profilAuto=i.profil;if(!x.profilManuel)x.profil=i.profil;x.diplome=i.diplome;x.motsCles=i.motsCles});save(K_CV,C);cvMsg=`Relecture terminée : ${n} nom(s) mis à jour (vos corrections manuelles sont conservées).`;renderList()};
   app.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openCV(b.dataset.open));
   app.querySelectorAll("[data-delcv]").forEach(b=>b.onclick=()=>{if(confirm("Retirer ce CV de la tablette ?")){const id=b.dataset.delcv;save(K_CV,load(K_CV,[]).filter(y=>y.id!==id));idb.del("F_"+id).catch(()=>{});idb.del("T_"+id).catch(()=>{});renderList()}});
   $("#cvUp").onchange=async e=>{const files=[...e.target.files];if(!files.length)return;$("#cvUp").disabled=true;await importCVs(files,t=>{cvMsg=t;const p=$("#cvProg");if(p)p.textContent=t});renderList()};
   $("#printList").onclick=()=>window.print();
   $("#logout").onclick=home;
   $("#newTest").onclick=()=>{if(cur&&!confirm("Un entretien est en cours. L'abandonner ?"))return;localStorage.removeItem(K_CUR);cur=null;isAdmin=false;renderWelcome()};
-  $("#exp").onclick=()=>{const b=new Blob([JSON.stringify({resultats:load(K_LIST,[]),cv:load(K_CV,[])},null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="TGS-CI-recrutement-"+new Date().toISOString().slice(0,10)+".json";a.click()};
+  expCache=null;prepareExport().catch(()=>{});
+  const ex=async()=>{if(await doExport(true)){cvMsg="";renderList()}};
+  $("#exp").onclick=ex;if($("#expNow"))$("#expNow").onclick=ex;
+  $("#autoExp").onchange=e=>localStorage.setItem(K_AUTO,e.target.checked?"1":"0");
   $("#imp").onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const j=JSON.parse(t);const inc=Array.isArray(j)?j:j.resultats||[];const list=load(K_LIST,[]);inc.forEach(c=>{const i=list.findIndex(x=>x.id===c.id);if(i<0)list.push(c);else list[i]=c});save(K_LIST,list);
-    if(j.cv){const R=load(K_CV,[]);j.cv.forEach(x=>{if(!R.some(y=>y.id===x.id))R.push(x)});save(K_CV,R)}alert(inc.length+" dossier(s) importé(s).");renderList()}catch(err){alert("Fichier invalide.")}})};
+    if(j.photos)Object.entries(j.photos).forEach(([id,data])=>idb.put({id:"P_"+id,data}).catch(()=>{}));if(j.cv){const R=load(K_CV,[]);j.cv.forEach(x=>{if(!R.some(y=>y.id===x.id))R.push(x)});save(K_CV,R)}alert(inc.length+" dossier(s) importé(s).");renderList()}catch(err){alert("Fichier invalide.")}})};
   $("#chpw").onclick=()=>{const o=prompt("Mot de passe actuel :");if(o===null)return;if(hash(o)!==pwdHash()){alert("Mot de passe actuel incorrect.");return}const n=prompt("Nouveau mot de passe (4 caractères minimum) :");if(!n||n.length<4){alert("Mot de passe trop court.");return}localStorage.setItem(K_PWD,hash(n));alert("Mot de passe modifié.")};
 }
 
