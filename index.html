@@ -252,8 +252,8 @@ const LETTERS="ABCDEF";
 let cur=load(K_CUR,null),timerInt=null,isAdmin=false,secEnter=null,lastAnsAt=null,awayStart=null,ignoreBlur=false;
 
 /* ---- Recherche du CV correspondant ---- */
-function findCV(nom,prenom,tel){
-  const cvs=load(K_CV,[]),p=normPhone(tel),tn=nameTokens(nom).filter(t=>t.length>=2),tp=nameTokens(prenom).filter(t=>t.length>=2);
+function findCV(nom,prenom,tel,pool){
+  const cvs=pool||load(K_CV,[]),p=normPhone(tel),tn=nameTokens(nom).filter(t=>t.length>=2),tp=nameTokens(prenom).filter(t=>t.length>=2);
   let best=null,bs=0;
   cvs.forEach(cv=>{
     const nt=nameTokens(cv.nom),txt=" "+nameTokens((cv.text||"").slice(0,4000)).join(" ")+" ",em=deacc(String(cv.email||"").split("@")[0]).replace(/[^a-z]/g,"");
@@ -266,6 +266,24 @@ function findCV(nom,prenom,tel){
     if(ok&&sc>bs){bs=sc;best=cv}
   });
   return best;
+}
+/* ---- Association d'un CV à un entretien déjà passé ---- */
+function linkCV(c,cv){
+  if(!cv){c.cvId=null;c.info.cvNom="";delete c.cvLinkedAt;return}
+  c.cvId=cv.id;c.info.cvNom=cv.nom||"";c.cvLinkedAt=Date.now();
+  if(!c.info.email&&cv.email)c.info.email=cv.email;
+  if(!c.info.rdv&&cv.rdv)c.info.rdv=cv.rdv;
+}
+const cvExists=id=>!!id&&load(K_CV,[]).some(x=>x.id===id);
+function autoLinkCVs(ids){
+  const C=load(K_CV,[]),L=load(K_LIST,[]);
+  const used=new Set(L.map(c=>c.cvId).filter(Boolean));
+  let n=0;
+  L.forEach(c=>{if(c.cvId&&C.some(x=>x.id===c.cvId))return;
+    const pool=C.filter(x=>(!ids||ids.includes(x.id))&&!used.has(x.id));if(!pool.length)return;
+    const cv=findCV(c.info.nomFam||c.info.nom||"",c.info.prenom||"",c.info.tel,pool);
+    if(cv){linkCV(c,cv);used.add(cv.id);n++}});
+  if(n)save(K_LIST,L);return n;
 }
 let pendingPhoto=null,cvMsg="";
 function resizeImage(file,max=520){return new Promise((res,rej)=>{const img=new Image();const u=URL.createObjectURL(file);img.onload=()=>{const k=Math.min(1,max/Math.max(img.width,img.height));const cv=document.createElement("canvas");cv.width=Math.round(img.width*k);cv.height=Math.round(img.height*k);cv.getContext("2d").drawImage(img,0,0,cv.width,cv.height);URL.revokeObjectURL(u);res(cv.toDataURL("image/jpeg",0.82))};img.onerror=()=>rej(new Error("Image illisible"));img.src=u})}
@@ -575,6 +593,70 @@ function qPoints(q,a){
   if(q.type==="multi"){const s=(a||[]).reduce((t,i)=>t+q.opts[i].p,0);return Math.max(0,Math.min(q.max,s))}
   return null;
 }
+/* ================== COMPARAISON RÉPONSES / CV ================== */
+const NUMW={un:1,une:1,deux:2,trois:3,quatre:4,cinq:5,six:6,sept:7,huit:8,neuf:9,dix:10};
+const DIPK=t=>{t=deacc(t);return /doctorat/.test(t)?"Doctorat":/master|bac\s*\+\s*5/.test(t)?"Master / Bac+5":/licence|bac\s*\+\s*3/.test(t)?"Licence / Bac+3":/\bbts\b|\bdut\b|\bdts\b|\bhnd\b|bac\s*\+\s*2/.test(t)?"BTS / Bac+2":/\bbac\b|baccalaur/.test(t)?"Bac":/\bbepc\b/.test(t)?"BEPC":/\bcap\b|\bbt\b/.test(t)?"CAP / BT":""};
+const TOOLS_RX=[/\bword\b|pack office|microsoft office|suite office|bureautique/,/excel|pack office|microsoft office|suite office|bureautique/,/whatsapp/,/outlook|messagerie|courriel|thunderbird|lotus notes|gestion des (e-?)?mails/,/caiss|facturation|logiciel de (gestion|vente)|point de vente|\bsage\b|odoo|\bpos\b/,/facebook|instagram|reseaux sociaux|community manag|tiktok|linkedin/];
+const DOM_L={ACC:"accueil / relation client",CAI:"caisse / vente",ADM:"administratif / secrétariat",TEC:"technique / informatique"};
+function cvYears(d){let y=0;const now=new Date().getFullYear();const EDU=/licence|master|\bbts\b|\bdut\b|\bdts\b|\bbac\b|baccalaur|bepc|\bcap\b|formation|ecole|universit|institut|lycee|college|diplom|etudes|cursus|doctorat|certificat/;d=d.split(/\n/).filter(l=>!EDU.test(l)).join("\n");(d.match(/\b((?:19|20)\d{2})\s*(?:-|–|a|au)\s*((?:19|20)\d{2}|aujourd|ce jour|present|nos jours)/g)||[]).forEach(m=>{const a=+m.match(/(19|20)\d{2}/)[0];const b=(m.match(/(19|20)\d{2}/g)||[])[1];const e=b?+b:now;if(e>=a&&e-a<15)y+=e-a});return y}
+function snip(d,re,n=60){const m=d.match(re);if(!m)return"";const i=Math.max(0,m.index-15);return d.slice(i,m.index+m[0].length+n).replace(/\s+/g," ").trim()}
+function compareCV(c){
+  const cv=load(K_CV,[]).find(x=>x.id===c.cvId);if(!cv)return null;
+  const d=deacc(cv.text||""),readable=d.replace(/\s/g,"").length>=60,A=c.answers||{},rows=[];
+  const add=(l,rep,cvv,st,com)=>rows.push({l,rep,cvv,st,com});
+  const F=id=>{const q=ALLQ.find(x=>x.id===id);return q?{q,a:A[id]}:null};
+  // Identité
+  const tk=nameTokens(c.info.nom).filter(t=>t.length>=2),nt=nameTokens(cv.nom||""),txt=" "+nameTokens(d.slice(0,4000)).join(" ")+" ";
+  const hit=tk.filter(t=>nt.includes(t)||txt.includes(" "+t+" ")).length;
+  const ph=normPhone(c.info.tel).length>=8&&(cv.tels||[]).some(t=>normPhone(t)===normPhone(c.info.tel));
+  add("Identité (nom et téléphone)",`${c.info.nom}${c.info.tel?" · "+c.info.tel:""}`,`${cv.nom||"nom non lu"}${(cv.tels||[]).length?" · "+cv.tels.join(", "):""}`,
+    ph||hit>=2?"ok":hit>=1?"warn":"bad",ph?"Même numéro de téléphone.":hit>=2?"Nom et prénom retrouvés dans le CV.":hit>=1?"Correspondance partielle du nom : vérifiez avec la photo.":"Le nom saisi n'apparaît pas dans le CV : vérifiez qu'il s'agit bien de la même personne.");
+  if(!readable){add("Contenu du CV","—","Texte du CV non lisible","na","Le texte n'a pas pu être lu : comparez manuellement en ouvrant le CV.");return{cv,rows,warn:rows.filter(r=>r.st==="warn"||r.st==="bad").length,readable}}
+  // Diplôme
+  const kd=DIPK(c.info.diplome||""),kc=DIPK(cv.diplome||"")||DIPK(d);
+  add("Diplôme",c.info.diplome||"non renseigné",cv.diplome||kc||"non repéré",!c.info.diplome||!kc?"na":kd&&kd===kc?"ok":"warn",
+    !c.info.diplome?"Diplôme non déclaré sur la fiche.":!kc?"Aucun diplôme repéré automatiquement dans le CV.":kd===kc?"Niveau identique.":`Niveau déclaré (${kd||c.info.diplome}) différent de celui lu sur le CV (${kc}).`);
+  // Expérience
+  const sc=cv.scores||{},rel=(sc.ACC||0)+(sc.CAI||0),yrs=cvYears(d),stage=/stage|stagiaire/.test(d);
+  const f1=F("F1");if(f1){const a=f1.a,lab=a===undefined?"sans réponse":f1.q.opts[a].t;
+    let st="ok",com="Cohérent avec le contenu du CV.";
+    if(a>=2&&rel===0){st="warn";com="Expérience d'au moins un an déclarée, mais le CV ne mentionne ni accueil, ni service client, ni vente."}
+    else if(a>=3&&yrs&&yrs<3){st="warn";com=`Plus de 3 ans déclarés, mais les périodes datées du CV totalisent environ ${yrs} an(s).`}
+    else if(a===0&&rel>=3){st="warn";com="Aucune expérience déclarée alors que le CV mentionne l'accueil, le service client ou la vente : la candidate se sous-estime peut-être."}
+    else if(a===1&&!stage&&rel===0){st="warn";com="Moins d'un an déclaré (stages compris), mais aucun stage ni poste lié n'apparaît dans le CV."}
+    add("Expérience en accueil / service client",lab,`${rel?rel+" mention(s) accueil/vente":"aucune mention accueil/vente"}${yrs?` · ≈ ${yrs} an(s) de périodes professionnelles datées`:""}${stage?" · stage(s)":""}`,st,com)}
+  // Outils
+  const f4=F("F4");if(f4){const dec=(f4.a||[]);const found=[],miss=[],extra=[];
+    f4.q.opts.forEach((o,i)=>{const inCv=TOOLS_RX[i]&&TOOLS_RX[i].test(d);if(dec.includes(i))(inCv?found:miss).push(o.t);else if(inCv)extra.push(o.t)});
+    add("Outils maîtrisés",dec.length?dec.map(i=>f4.q.opts[i].t).join(", "):"aucun coché",`${found.length?"Retrouvés : "+found.join(", "):"Aucun outil coché retrouvé"}${extra.length?" · Cités dans le CV mais non cochés : "+extra.join(", "):""}`,
+      miss.length>=2?"warn":"ok",miss.length?`Non mentionnés dans le CV : ${miss.join(", ")}.${miss.length>=2?" À faire démontrer lors de l'entretien.":""}`:"Tous les outils cochés figurent dans le CV.")}
+  // Anglais
+  const f5=F("F5");if(f5){const a=f5.a,lab=a===undefined?"sans réponse":f5.q.opts[a].t;const en=/anglais|english/.test(d),sn=snip(d,/anglais|english/,45);
+    const hi=/courant|bilingue|fluent|tres bon|bon niveau|avance|c1|c2|b2|toeic|toefl|ielts/.test(sn),lo=/notion|scolaire|debutant|basique|elementaire|a1|a2|faible|moyen/.test(sn);
+    let st="ok",com="Cohérent.";
+    if(a>=2&&!en){st="warn";com="Niveau conversationnel ou courant déclaré, mais l'anglais n'est pas mentionné dans le CV."}
+    else if(a===3&&lo&&!hi){st="warn";com="Anglais « courant » déclaré, mais le CV indique un niveau plus faible."}
+    else if(a<=1&&hi){st="warn";com="Le CV indique un bon niveau d'anglais, supérieur à celui déclaré."}
+    else if(!en)st="na",com="L'anglais n'est pas mentionné dans le CV.";
+    add("Niveau d'anglais",lab,en?`« …${sn}… »`:"non mentionné",st,com)}
+  // Apple
+  const f6=F("F6");if(f6){const a=f6.a,lab=a===undefined?"sans réponse":f6.q.opts[a].t;const ap=/\bapple\b|macbook|\bmac\b|iphone|ipad|\bios\b|macos/.test(d);
+    add("Connaissance des produits Apple",lab,ap?"Apple / Mac / iPhone cité dans le CV":"non mentionné",ap||a===undefined||a<2?"ok":"na",ap?"Le CV confirme un lien avec l'univers Apple.":a>=2?"Non vérifiable sur le CV : posez une question de vérification à l'oral.":"—")}
+  // Réponses rédigées : domaines et durée d'expérience évoqués
+  const g=deacc([A.G1,A.G5].filter(Boolean).join(" \n "));
+  if(g.trim()){
+    const said=Object.keys(DOM_L).filter(k=>(g.match(new RegExp(PROF_RX[k].source,"g"))||[]).length),absent=said.filter(k=>!(sc[k]>0));
+    add("Domaines cités dans la présentation écrite",said.length?said.map(k=>DOM_L[k]).join(", "):"aucun domaine précis",Object.keys(DOM_L).filter(k=>sc[k]>0).map(k=>DOM_L[k]).join(", ")||"aucun domaine repéré",
+      absent.length?"warn":said.length?"ok":"na",absent.length?`Évoqué à l'écrit mais absent du CV : ${absent.map(k=>DOM_L[k]).join(", ")}.`:said.length?"Les domaines évoqués figurent dans le CV.":"La présentation ne cite pas de domaine précis.");
+    let yd=0;(g.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(ans?|annees?)\b(?=[^.]{0,25}experien)|experien[^.]{0,30}?\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(ans?|annees?)\b/g)||[]).forEach(m=>{const w=m.match(/\b(\d{1,2}|un|une|deux|trois|quatre|cinq|six|sept|huit|neuf|dix)\s*(ans?|annees?)/);if(w){const v=/\d/.test(w[1])?+w[1]:NUMW[w[1]];if(v>yd)yd=v}});
+    if(yd)add("Années d'expérience annoncées à l'écrit",`${yd} an(s)`,yrs?`≈ ${yrs} an(s) de périodes professionnelles datées`:"pas de période professionnelle datée",!yrs?"na":yd>yrs+1?"warn":"ok",!yrs?"Non vérifiable : le CV ne comporte pas de dates exploitables.":yd>yrs+1?"La durée annoncée dépasse ce que montre le CV.":"Cohérent avec les dates du CV.");
+    const mk=(cv.motsCles||[]).filter(k=>k.length>3&&g.includes(deacc(k)));
+    if(mk.length)add("Mots-clés du CV repris à l'écrit",mk.length+" mot(s)",mk.join(", "),"ok","La candidate reprend à l'écrit des éléments présents dans son CV.");
+  }
+  // Questionnaire passé vs profil du CV
+  if(cv.profil&&c.profil&&cv.profil!==c.profil)add("Mise en situation passée",PROFILS[c.profil],PROFILS[cv.profil],"info","Le questionnaire a été passé sans le CV : la mise en situation n'était pas celle adaptée au profil du CV. Tenez-en compte dans la note de la partie H.");
+  return{cv,rows,warn:rows.filter(r=>r.st==="warn"||r.st==="bad").length,readable};
+}
 function compute(c){
   const bySec={};let qcm=0,qcmMax=0;
   const OQ=openQ(c);secsOf(c).forEach(s=>{if(s.id==="G"||s.questions.every(q=>q.type==="open"))return;let p=0,m=0;s.questions.forEach(q=>{if(q.type==="open")return;p+=qPoints(q,c.answers[q.id]);m+=q.max});bySec[s.id]={id:s.id,title:s.title,p,m,pct:m?p/m*100:0};qcm+=p;qcmMax+=m});
@@ -603,7 +685,8 @@ function compute(c){
   if(c.paste)alerts.push(`${c.paste} tentative(s) de copier-coller bloquée(s).`);
   if(durMs!=null&&durMs>(DUREE_MIN+10)*60000)alerts.push(`Durée : ${fmtDur(durMs)}, au-delà du temps conseillé (${DUREE_MIN} min).`);
   secsOf(c).forEach(sec=>{if(sec.id==="G")return;const t=c.sec&&c.sec[sec.id];if(t&&t.ms/sec.questions.length<5000)alerts.push(`Partie « ${sec.title} » faite très vite (${fmtDur(t.ms)} pour ${sec.questions.length} questions) : réponses peut-être au hasard.`)});
-  if(!c.cvId)alerts.push("Aucun CV correspondant retrouvé : vérifiez l'identité avec la photo.");
+  if(!c.cvId||!cvExists(c.cvId))alerts.push("Aucun CV correspondant retrouvé : vérifiez l'identité avec la photo, ou associez son CV depuis sa fiche.");
+  else{const cmp=compareCV(c);if(cmp&&cmp.warn)alerts.push(`Comparaison avec le CV : ${cmp.warn} point(s) à vérifier (voir « Comparaison réponses / CV »).`)}
   if(ap&&ap.late>10)alerts.push(`Arrivée en retard de ${Math.round(ap.late)} min par rapport à la convocation.`);
   let dec,cls;
   const blocking=alerts.some(a=>a.startsWith("Français")||a.startsWith("Présentation")||a.startsWith("Nombreuses fautes"));
@@ -707,17 +790,18 @@ function parseCV(text,fileName){
   return{nom,tels,email,diplome:dip,profil,profilAuto:profil,scores:sc,motsCles:[...mk].slice(0,12)};
 }
 async function importCVs(files,onP){
-  const C=load(K_CV,[]);let i=0,errs=[];
+  const C=load(K_CV,[]);let i=0,errs=[],ids=[];
   for(const f of files){i++;const tag=`CV ${i}/${files.length} (${f.name}) : `;
     try{onP(tag+"lecture…");const r=await readCV(f,x=>onP(tag+x));let info=parseCV(r.text,f.name);
       if(!info.nom&&r.first){try{onP(tag+"recherche du nom dans l'en-tête…");const hd=await ocrHeader(r.first);if(hd.trim()){r.text=hd+"\n"+r.text;info=parseCV(r.text,f.name)}}catch(e){}}
-      const id="V"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+      const old0=C.findIndex(x=>x.file===f.name);const id=old0>=0?C[old0].id:"V"+Date.now().toString(36)+Math.random().toString(36).slice(2,5);
       await idb.put({id:"F_"+id,data:await fileToDataURL(f),type:f.type||"application/pdf",name:f.name});
       await idb.put({id:"T_"+id,data:r.thumb});
       const old=C.findIndex(x=>x.file===f.name);const rec={id,file:f.name,text:r.text.slice(0,12000),ocr:r.ocr,addedAt:Date.now(),rdv:"",...info};
-      if(old>=0){rec.rdv=C[old].rdv;C[old]=rec}else C.push(rec);save(K_CV,C);
+      if(old>=0){rec.rdv=C[old].rdv;C[old]=rec}else C.push(rec);save(K_CV,C);ids.push(id);
     }catch(e){errs.push(f.name+" : "+e.message)}}
   onP(`${files.length-errs.length} CV importé(s).`+(errs.length?" Erreurs : "+errs.join(" ; ")+" (une connexion Internet est nécessaire pour lire les CV).":""));
+  return ids;
 }
 async function openCV(id){try{const f=await idb.get("F_"+id);if(!f){alert("Fichier introuvable.");return}const b=await (await fetch(f.data)).blob();const u=URL.createObjectURL(b);const w=window.open(u,"_blank");if(!w)location.href=u}catch(e){alert("Impossible d'ouvrir le CV.")}}
 
@@ -730,7 +814,7 @@ function buildCSV(){const rows=load(K_LIST,[]).map(c=>({c,r:compute(c)})).sort((
   return "\ufeff"+[H,...L].map(l=>l.map(csvCell).join(";")).join("\r\n")}
 async function buildBackup(){const list=load(K_LIST,[]);const photos={};
   for(const c of list){try{const p=c.photoInline?{data:c.photoInline}:await idb.get("P_"+c.id);if(p)photos[c.id]=p.data}catch(e){}}
-  return JSON.stringify({app:"TGS CI recrutement",exportLe:new Date().toISOString(),resultats:list,cv:load(K_CV,[]).map(({text,...x})=>x),photos})}
+  return JSON.stringify({app:"TGS CI recrutement",exportLe:new Date().toISOString(),resultats:list,cv:load(K_CV,[]),photos})}
 let expCache=null;
 async function prepareExport(){const d=new Date(),st=d.toISOString().slice(0,10)+"_"+String(d.getHours()).padStart(2,"0")+"h"+String(d.getMinutes()).padStart(2,"0");
   expCache=[new File([await buildBackup()],"TGS-CI-recrutement-sauvegarde_"+st+".json",{type:"application/json"}),new File([buildCSV()],"TGS-CI-recrutement-classement_"+st+".csv",{type:"text/csv"})];return expCache}
@@ -759,6 +843,7 @@ function home(){isAdmin=false;if(cur)renderStep();else renderWelcome()}
 
 function renderList(){
   const list=load(K_LIST,[]),cvs=load(K_CV,[]);
+  const orphans=list.filter(c=>!c.cvId||!cvs.some(x=>x.id===c.cvId));
   const rows=list.map(c=>({c,r:compute(c)})).sort((a,b)=>b.r.total-a.r.total);
   app.innerHTML=`
   <div class="print-only"><h1>TGS CI – Classement des candidates</h1><p class="small">Poste : Chargée d'accueil & relation client · Édité le ${fmtDate(Date.now())}</p></div>
@@ -784,6 +869,7 @@ function renderList(){
       ${cvs.length?`<button class="btn ghost sm" id="cvRe">Relire les noms et profils</button>`:""}
       <label class="btn sm" style="cursor:pointer" for="cvUp">Déposer des CV (PDF ou photos)</label><input type="file" id="cvUp" accept="application/pdf,image/*" multiple hidden></div>
     <p class="muted small">Déposez tous les CV reçus. Le texte est lu automatiquement (y compris les CV scannés ou photographiés) pour retrouver chaque candidate par son nom et ses prénoms, et choisir le questionnaire adapté à son profil. Le nom, les prénoms et le téléphone sont lus dans le contenu du CV (le nom du fichier n'est pas utilisé). Vérifiez-les : vous pouvez corriger le nom, le téléphone et le questionnaire directement dans le tableau, la modification est enregistrée aussitôt. Indiquez aussi l'heure de convocation pour noter la ponctualité. Les CV restent enregistrés sur cette tablette.</p>
+    <p class="muted small">Un CV peut aussi être ajouté <b>après</b> l'entretien : les CV déposés sont associés automatiquement aux candidates qui ont déjà passé le test (ou via « Associer à un entretien déjà passé »), et la fiche de la candidate affiche alors la comparaison entre ses réponses et son CV.</p>
     <div id="cvProg" class="small" style="color:var(--brand-2);font-weight:600">${esc(cvMsg)}</div>
     ${cvs.length?`<div class="tscroll"><table><thead><tr><th></th><th>Candidate (nom détecté)</th><th>Téléphone(s)</th><th>Questionnaire</th><th>Convocation</th><th>Statut</th><th></th></tr></thead><tbody>
     ${cvs.map(x=>{const done=list.find(c=>c.cvId===x.id);const enc=cur&&cur.cvId===x.id;return `<tr>
@@ -792,7 +878,7 @@ function renderList(){
       <td><input type="text" data-cvf="tels" data-id="${x.id}" value="${esc((x.tels||[]).join(", "))}" style="min-width:130px"></td>
       <td><select data-cvf="profil" data-id="${x.id}">${Object.entries(PROFILS).map(([k,l])=>`<option value="${k}" ${x.profil===k?"selected":""}>${l}${x.profilAuto===k?" (auto)":""}</option>`).join("")}</select>${x.scores?`<div class="small muted" style="margin-top:4px">Indices lus dans le CV : ${["ACC","CAI","ADM","TEC"].map(k=>`${{ACC:"accueil",CAI:"caisse/vente",ADM:"administratif",TEC:"technique"}[k]} ${x.scores[k]||0}`).join(" · ")}</div>`:""}</td>
       <td><input type="datetime-local" data-cvf="rdv" data-id="${x.id}" value="${esc(x.rdv||"")}"></td>
-      <td>${done?`<span class="badge b-ok">Passé</span>`:enc?`<span class="badge b-warn">En cours</span>`:`<span class="badge b-na">En attente</span>`}</td>
+      <td>${done?`<span class="badge b-ok">Passé</span><div class="small muted">${esc(done.info.nom)}</div>`:enc?`<span class="badge b-warn">En cours</span>`:`<span class="badge b-na">En attente</span>${orphans.length?`<div style="margin-top:6px"><select data-linkc="${x.id}" class="small" style="max-width:210px"><option value="">Associer à un entretien déjà passé…</option>${orphans.map(c=>`<option value="${c.id}">${esc(c.info.nom)} · ${fmtDate(c.endedAt)}</option>`).join("")}</select></div>`:""}`}</td>
       <td style="white-space:nowrap"><button class="btn ghost sm" data-open="${x.id}">Voir</button> <button class="btn danger sm" data-delcv="${x.id}">Retirer</button></td></tr>`}).join("")}
     </tbody></table></div>`:`<p class="muted">Aucun CV déposé pour l'instant. Sans CV, la candidate passe le questionnaire « profil général ».</p>`}
   </div>
@@ -811,8 +897,10 @@ function renderList(){
     if(f==="rdv"){const L=load(K_LIST,[]);L.forEach(c=>{if(c.cvId===x.id)c.info.rdv=inp.value});save(K_LIST,L)}});
   const re=$("#cvRe");if(re)re.onclick=()=>{const C=load(K_CV,[]);let n=0;C.forEach(x=>{if(!x.text)return;const i=parseCV(x.text,x.file);if(!x.nomManuel&&i.nom&&i.nom!==x.nom){x.nom=i.nom;n++}if(!x.telsManuel)x.tels=i.tels;x.email=i.email;x.scores=i.scores;x.profilAuto=i.profil;if(!x.profilManuel)x.profil=i.profil;x.diplome=i.diplome;x.motsCles=i.motsCles});save(K_CV,C);cvMsg=`Relecture terminée : ${n} nom(s) mis à jour (vos corrections manuelles sont conservées).`;renderList()};
   app.querySelectorAll("[data-open]").forEach(b=>b.onclick=()=>openCV(b.dataset.open));
+  app.querySelectorAll("[data-linkc]").forEach(sel=>sel.onchange=()=>{if(!sel.value)return;const L=load(K_LIST,[]);const c=L.find(y=>y.id===sel.value);const cv=load(K_CV,[]).find(y=>y.id===sel.dataset.linkc);if(!c||!cv)return;
+    if(!confirm(`Associer le CV « ${cv.nom||cv.file} » à l'entretien de ${c.info.nom} ?`)){sel.value="";return}linkCV(c,cv);save(K_LIST,L);cvMsg=`CV associé à ${c.info.nom}. Ouvrez sa fiche pour voir la comparaison réponses / CV.`;renderList()});
   app.querySelectorAll("[data-delcv]").forEach(b=>b.onclick=()=>{if(confirm("Retirer ce CV de la tablette ?")){const id=b.dataset.delcv;save(K_CV,load(K_CV,[]).filter(y=>y.id!==id));idb.del("F_"+id).catch(()=>{});idb.del("T_"+id).catch(()=>{});renderList()}});
-  $("#cvUp").onchange=async e=>{const files=[...e.target.files];if(!files.length)return;$("#cvUp").disabled=true;await importCVs(files,t=>{cvMsg=t;const p=$("#cvProg");if(p)p.textContent=t});renderList()};
+  $("#cvUp").onchange=async e=>{const files=[...e.target.files];if(!files.length)return;$("#cvUp").disabled=true;const ids=await importCVs(files,t=>{cvMsg=t;const p=$("#cvProg");if(p)p.textContent=t});const n=autoLinkCVs(ids);if(n)cvMsg+=` ${n} CV associé(s) automatiquement à un entretien déjà passé : la comparaison réponses / CV est disponible dans la fiche.`;renderList()};
   $("#printList").onclick=()=>window.print();
   $("#logout").onclick=home;
   $("#newTest").onclick=()=>{if(cur&&!confirm("Un entretien est en cours. L'abandonner ?"))return;localStorage.removeItem(K_CUR);cur=null;isAdmin=false;renderWelcome()};
@@ -821,7 +909,7 @@ function renderList(){
   $("#exp").onclick=ex;if($("#expNow"))$("#expNow").onclick=ex;
   $("#autoExp").onchange=e=>localStorage.setItem(K_AUTO,e.target.checked?"1":"0");
   $("#imp").onchange=e=>{const f=e.target.files[0];if(!f)return;f.text().then(t=>{try{const j=JSON.parse(t);const inc=Array.isArray(j)?j:j.resultats||[];const list=load(K_LIST,[]);inc.forEach(c=>{const i=list.findIndex(x=>x.id===c.id);if(i<0)list.push(c);else list[i]=c});save(K_LIST,list);
-    if(j.photos)Object.entries(j.photos).forEach(([id,data])=>idb.put({id:"P_"+id,data}).catch(()=>{}));if(j.cv){const R=load(K_CV,[]);j.cv.forEach(x=>{if(!R.some(y=>y.id===x.id))R.push(x)});save(K_CV,R)}alert(inc.length+" dossier(s) importé(s).");renderList()}catch(err){alert("Fichier invalide.")}})};
+    if(j.photos)Object.entries(j.photos).forEach(([id,data])=>idb.put({id:"P_"+id,data}).catch(()=>{}));if(j.cv){const R=load(K_CV,[]);j.cv.forEach(x=>{const o=R.find(y=>y.id===x.id);if(!o)R.push(x);else if(!o.text&&x.text)o.text=x.text});save(K_CV,R)}alert(inc.length+" dossier(s) importé(s).");renderList()}catch(err){alert("Fichier invalide.")}})};
   $("#chpw").onclick=()=>{const o=prompt("Mot de passe actuel :");if(o===null)return;if(hash(o)!==pwdHash()){alert("Mot de passe actuel incorrect.");return}const n=prompt("Nouveau mot de passe (4 caractères minimum) :");if(!n||n.length<4){alert("Mot de passe trop court.");return}localStorage.setItem(K_PWD,hash(n));alert("Mot de passe modifié.")};
 }
 
@@ -833,7 +921,9 @@ function renderDetail(id){
   const list=load(K_LIST,[]);const c=list.find(x=>x.id===id);if(!c)return renderList();
   const r=compute(c),syn=synthese(c,r),L=r.lang;
   const persist=()=>{const LL=load(K_LIST,[]);const i=LL.findIndex(x=>x.id===id);LL[i]=c;save(K_LIST,LL)};
-  const cv=load(K_CV,[]).find(x=>x.id===c.cvId);const SS=secsOf(c),OQ=openQ(c);
+  const allCv=load(K_CV,[]),cv=allCv.find(x=>x.id===c.cvId);const SS=secsOf(c),OQ=openQ(c),cmp=cv?compareCV(c):null;
+  const usedCv=new Set(list.filter(y=>y.id!==c.id).map(y=>y.cvId).filter(Boolean));
+  const sugg=cv?null:findCV(c.info.nomFam||c.info.nom||"",c.info.prenom||"",c.info.tel,allCv.filter(x=>!usedCv.has(x.id)));
   const secRows=SS.map((s,i)=>{const t=(c.sec||{})[s.id]||{ms:0,visits:0};const exp=SEC_MIN[s.id]*60000;const per=t.ms/s.questions.length;
     let rem=t.ms>exp*1.5?"Lent":t.ms<exp*0.25?"Très rapide":"Normal";const col=rem==="Normal"?"var(--ok)":rem==="Lent"?"var(--warn)":"var(--bad)";
     return `<tr><td>${i+1}. ${esc(s.title)}</td><td class="num">${fmtDur(t.ms)}</td><td class="num">${SEC_MIN[s.id]} min</td><td class="num">${fmtDur(per)}</td><td class="num">${t.visits}</td><td style="color:${col};font-weight:600">${rem}</td></tr>`}).join("");
@@ -845,7 +935,7 @@ function renderDetail(id){
 
   <div class="card">
     <div class="row" style="align-items:flex-start">
-      <div class="idpics"><figure><img id="dPhoto" alt="Photo prise le jour de l'entretien"><figcaption>Photo prise à l'entretien</figcaption></figure><figure><img id="dCv" alt="CV"><figcaption>${cv?`<a href="#" id="openCv">CV reçu (ouvrir)</a>`:"Aucun CV retrouvé"}</figcaption></figure></div>
+      <div class="idpics"><figure><img id="dPhoto" alt="Photo prise le jour de l'entretien"><figcaption>Photo prise à l'entretien</figcaption></figure><figure><img id="dCv" alt="CV"><figcaption>${cv?`<a href="#" id="openCv">CV reçu (ouvrir)</a>`:`<a href="#cvCard" class="no-print">Associer un CV</a><span class="print-only">Aucun CV</span>`}</figcaption></figure></div>
       <div><div class="small muted">Dossier ${esc(c.id.toUpperCase())} · questionnaire « ${esc(PROFILS[c.profil||"JUN"])} »${cv?"":" · CV non retrouvé"}</div><h1 style="margin-bottom:2px">${esc(c.info.nom)}</h1>
       <div class="small muted">${esc([c.info.tel,c.info.email,c.info.lieu].filter(Boolean).join(" · ")||"Aucun contact saisi")}${c.info.diplome?"<br>Diplôme déclaré : "+esc(c.info.diplome):""}${c.info.salaire?"<br>Prétentions : "+esc(c.info.salaire)+" FCFA":""}${cv&&cv.nom&&deacc(cv.nom)!==deacc(c.info.nom)?`<br>Nom sur le CV : « ${esc(cv.nom)} »`:""}</div></div>
       <span class="spacer"></span>
@@ -889,9 +979,31 @@ function renderDetail(id){
     <p class="small muted no-print">0 = inacceptable · 1 = faible · 2 = moyen · 3 = bien · 4 = excellent. La ponctualité est notée automatiquement si l'heure de convocation est renseignée.</p>
     ${PRES_CRIT.map(([k,l])=>`<div class="crit"><div>${l}</div>${picker("pres",k,4,c.admin.pres[k],k==="ponct"&&r.ap?r.ap.score:undefined)}</div>`).join("")}
   </div>
-  <div class="card"><h2>Adéquation du profil / CV</h2>
-    ${cv?`<p class="small"><b>CV retrouvé :</b> ${esc(cv.file)} · nom lu : ${esc(cv.nom||"—")}${cv.diplome?`<br><b>Diplôme repéré :</b> ${esc(cv.diplome)}`:""}${cv.motsCles&&cv.motsCles.length?`<br><b>Mots-clés du CV :</b> ${esc(cv.motsCles.join(", "))}`:""}</p>`:`<p class="small" style="color:var(--warn)">Aucun CV correspondant n'a été retrouvé sur la tablette.</p>`}
+  <div class="card" id="cvCard"><h2>Adéquation du profil / CV</h2>
+    ${cv?`<p class="small"><b>CV ${c.cvLinkedAt&&c.cvLinkedAt>(c.endedAt||0)?"associé après l'entretien":"retrouvé"} :</b> ${esc(cv.file)} · nom lu : ${esc(cv.nom||"—")}${cv.diplome?`<br><b>Diplôme repéré :</b> ${esc(cv.diplome)}`:""}${cv.motsCles&&cv.motsCles.length?`<br><b>Mots-clés du CV :</b> ${esc(cv.motsCles.join(", "))}`:""}</p>`:`<p class="small" style="color:var(--warn)">Aucun CV correspondant n'a été retrouvé sur la tablette.</p>`}
+    <div class="note no-print" style="margin:6px 0 12px">
+      <div class="small" style="margin-bottom:8px"><b>${cv?"Changer le CV associé":"Associer le CV de cette candidate"}</b> — possible même si elle a déjà passé le test : ses réponses seront comparées au contenu du CV.</div>
+      ${sugg?`<div class="row small" style="margin-bottom:8px">CV suggéré : <b>${esc(sugg.nom||sugg.file)}</b> <span class="muted">(${esc(sugg.file)})</span><button class="btn sm" id="cvSugg">Associer ce CV</button></div>`:""}
+      <div class="row">
+        ${allCv.length?`<select id="cvPick" style="max-width:320px"><option value="">Choisir un CV déjà déposé…</option>${allCv.map(x=>{const o=list.find(y=>y.cvId===x.id&&y.id!==c.id);return `<option value="${x.id}" ${x.id===c.cvId?"selected":""}>${esc(x.nom||x.file)}${o?" · déjà lié à "+esc(o.info.nom):""}</option>`}).join("")}</select><button class="btn ghost sm" id="cvLink">Associer</button>`:""}
+        <label class="btn sm" style="cursor:pointer" for="cvOne">Déposer son CV (PDF ou photo)</label><input type="file" id="cvOne" accept="application/pdf,image/*" hidden>
+        ${cv?`<button class="btn danger sm" id="cvUnlink">Dissocier</button>`:""}
+      </div>
+      <div id="cvOneProg" class="small" style="color:var(--brand-2);font-weight:600;margin-top:6px"></div>
+    </div>
     ${PROF_CRIT.map(([k,l,m])=>`<div class="crit"><div>${l} <span class="muted small">(0 à ${m})</span></div>${picker("profil",k,m,c.admin.profil[k],r.apf[k])}</div>`).join("")}
+  </div>
+
+  <div class="card" id="cmpCard"><h2>Comparaison réponses / CV</h2>
+    ${!cmp?`<p class="small muted">Aucun CV associé. Associez ou déposez le CV de la candidate ci-dessus pour comparer ses réponses au contenu de son CV.</p>`:`
+    <p class="small muted">Comparaison automatique entre ce que la candidate a déclaré pendant le test et ce qui est écrit dans son CV. ${cmp.warn?`<b style="color:var(--warn)">${cmp.warn} point(s) à vérifier</b> : posez-lui la question à l'oral.`:`<b style="color:var(--ok)">Aucune incohérence détectée.</b>`}</p>
+    <div class="tscroll"><table><thead><tr><th>Élément</th><th>Réponse au test</th><th>Dans le CV</th><th>Constat</th></tr></thead><tbody>
+    ${cmp.rows.map(x=>`<tr><td><b>${esc(x.l)}</b></td><td class="small">${esc(x.rep)}</td><td class="small">${esc(x.cvv)}</td><td class="small"><span class="badge ${{ok:"b-ok",warn:"b-warn",bad:"b-bad",na:"b-na",info:"b-na"}[x.st]}">${{ok:"Cohérent",warn:"À vérifier",bad:"Incohérent",na:"Non vérifiable",info:"Information"}[x.st]}</span><div style="margin-top:4px">${esc(x.com)}</div></td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="grid2" style="margin-top:14px">
+      <div><h3>Présentation rédigée par la candidate</h3><div class="openans" style="max-height:260px;overflow:auto">${c.answers.G1?esc(c.answers.G1):"<i>Pas de réponse</i>"}</div></div>
+      <div><h3>Texte lu dans le CV</h3><div class="openans" style="max-height:260px;overflow:auto;white-space:pre-wrap;font-size:13px">${cv.text?esc(cv.text.slice(0,6000)):"<i>Texte non lu : ouvrez le CV.</i>"}</div></div>
+    </div>`}
   </div>
 
   <div class="card"><h2>Réponses rédigées</h2>
@@ -929,6 +1041,13 @@ function renderDetail(id){
   if(cv){idb.get("T_"+cv.id).then(t=>{const im=$("#dCv");if(im&&t)im.src=t.data}).catch(()=>{});$("#openCv").onclick=e=>{e.preventDefault();openCV(cv.id)};$("#dCv").onclick=()=>openCV(cv.id)}
   const rerender=()=>{const y=window.scrollY;renderDetail(id);window.scrollTo(0,y)};
   $("#back").onclick=renderList;$("#print").onclick=()=>window.print();
+  const doLink=cvx=>{if(!cvx)return;const o=load(K_LIST,[]).find(y=>y.cvId===cvx.id&&y.id!==c.id);if(o&&!confirm(`Ce CV est déjà lié à ${o.info.nom}. L'associer quand même à ${c.info.nom} ?`))return;linkCV(c,cvx);persist();rerender();setTimeout(()=>{const k=$("#cmpCard");if(k)k.scrollIntoView({behavior:"smooth"})},50)};
+  if($("#cvSugg"))$("#cvSugg").onclick=()=>doLink(sugg);
+  if($("#cvLink"))$("#cvLink").onclick=()=>{const v=$("#cvPick").value;if(!v)return alert("Choisissez un CV dans la liste.");doLink(load(K_CV,[]).find(x=>x.id===v))};
+  if($("#cvUnlink"))$("#cvUnlink").onclick=()=>{if(confirm("Dissocier ce CV de la fiche ? (le CV reste sur la tablette)")){linkCV(c,null);persist();rerender()}};
+  $("#cvOne").onchange=async e=>{const f=e.target.files[0];if(!f)return;$("#cvOne").disabled=true;const P=t=>{const p=$("#cvOneProg");if(p)p.textContent=t};
+    const ids=await importCVs([f],P);const cvx=load(K_CV,[]).find(x=>x.id===ids[0]);if(!cvx){$("#cvOne").disabled=false;return}
+    linkCV(c,cvx);persist();rerender();setTimeout(()=>{const k=$("#cmpCard");if(k)k.scrollIntoView({behavior:"smooth"})},50)};
   $("#reana").onclick=async()=>{$("#reana").textContent="Analyse en cours…";$("#reana").disabled=true;await analyze(id);rerender()};
   $("#del").onclick=()=>{if(confirm("Supprimer définitivement ce dossier ?")){save(K_LIST,load(K_LIST,[]).filter(x=>x.id!==id));idb.del("P_"+id).catch(()=>{});renderList()}};
   app.querySelectorAll(".scorepick button").forEach(b=>b.onclick=()=>{const w=b.parentElement;const g=w.dataset.g,k=w.dataset.k,v=+b.dataset.v;
